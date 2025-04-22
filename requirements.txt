@@ -2,3 +2,4 @@ scikit-learn==1.3.2
 streamlit
 matplotlib
 pandas
+streamlit-autorefresh
