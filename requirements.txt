@@ -1,4 +1,4 @@
+sklearn
 streamlit
 matplotlib.pyplot 
 pandas
-sklearn
