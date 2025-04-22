@@ -1,9 +1,9 @@
 
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import LabelEncoder
 import streamlit as st
 import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
 
 # ------------------ เตรียมข้อมูล ------------------ #
