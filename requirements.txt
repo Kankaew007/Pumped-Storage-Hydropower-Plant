@@ -5,3 +5,4 @@ pandas
 streamlit-autorefresh
 plotly
 numpy
+XlsxWriter
