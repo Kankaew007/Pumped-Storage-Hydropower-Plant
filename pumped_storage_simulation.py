@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
+from pymodbus.client import ModbusTcpClient
 import io
 
 # ------------------ Load and Predict Load ------------------ #
@@ -22,7 +23,7 @@ df['Predicted_Load'] = model.predict(X)
 
 # ------------------ Streamlit Layout ------------------ #
 st.set_page_config(layout="wide")
-st.title("🔋 Pumped Storage Hydropower Simulation with AI Control")
+st.title("🔋 Pumped Storage Hydropower Simulation with AI + Modbus TCP")
 
 st.sidebar.header("🧮 Reservoir Parameters")
 uw = st.sidebar.number_input("Upper Width (m)", 100)
@@ -56,7 +57,16 @@ class PumpedStoragePlant:
         return (volume_m3 * 1000 * 9.81 * self.height) / 3.6e6
 
     def send_to_plc(self, mode, power):
-        st.write(f"📡 Sending to PLC → MODE={mode}, POWER={power} MW")
+        mode_value = {"Idle": 0, "Pumping": 1, "Generating": 2}.get(mode, 0)
+        try:
+            client = ModbusTcpClient('127.0.0.1', port=502)
+            client.connect()
+            client.write_register(0, mode_value)  # Register 0 = MODE
+            client.write_register(1, int(power))  # Register 1 = POWER
+            client.close()
+            st.success(f"📡 Sent to PLC (QModMaster): MODE={mode}, POWER={power} MW")
+        except Exception as e:
+            st.error(f"❌ Failed to send to Modbus PLC: {e}")
 
     def pump(self):
         if self.lower > 5 and self.upper < 100:
@@ -141,7 +151,6 @@ elif mode == "Simulate Full Day":
     fig.update_layout(title="Simulation Result (24hr)", xaxis_title="Hour", yaxis_title="Value")
     st.plotly_chart(fig)
 
-    # Export
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_result.to_excel(writer, index=False, sheet_name="Simulation")
