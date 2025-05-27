@@ -5,11 +5,15 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
 from pymodbus.client.sync import ModbusTcpClient
+from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
+from pymodbus.constants import Endian
 import io
 
-client = ModbusTcpClient('127.0.0.1', port=1502)
+# ------------------ ตั้งค่า Modbus TCP ------------------ #
+MODBUS_IP = '127.0.0.1'
+MODBUS_PORT = 1502
 
-# ------------------ Load and Predict Load ------------------ #
+# ------------------ โหลดข้อมูล Load ------------------ #
 df = pd.read_csv("load_demand_sample.csv")
 df['Hour'] = df['Time'].str.slice(0, 2).astype(int)
 df['Weekday'] = [1]*24
@@ -25,9 +29,10 @@ df['Predicted_Load'] = model.predict(X)
 
 # ------------------ Streamlit Layout ------------------ #
 st.set_page_config(layout="wide")
-st.title("🔋 Pumped Storage Hydropower Simulation with AI + Modbus TCP")
+st.title("🔋 Pumped Storage Hydropower with Streamlit + Modbus (Full Control)")
 
-st.sidebar.header("🧲 Reservoir Parameters")
+# ------------------ Sidebar ------------------ #
+st.sidebar.header("🧮 Reservoir Parameters")
 uw = st.sidebar.number_input("Upper Width (m)", 100)
 ul = st.sidebar.number_input("Upper Length (m)", 100)
 ud = st.sidebar.number_input("Upper Depth (m)", 30)
@@ -61,21 +66,40 @@ class PumpedStoragePlant:
     def send_to_plc(self, mode, power):
         mode_value = {"Idle": 0, "Pumping": 1, "Generating": 2}.get(mode, 0)
         try:
-            client = ModbusTcpClient('127.0.0.1', port=1502)
-            if client.connect():
-                client.write_register(0, mode_value, unit=1)
-                client.write_register(1, int(power), unit=1)
-                read = client.read_holding_registers(0, 2, unit=1)
-                if not read.isError():
-                    st.success(f"📱 Sent to PLC: MODE={mode}({mode_value}), POWER={power} MW")
-                    st.info(f"📅 Confirmed Read: MODE={read.registers[0]}, POWER={read.registers[1]}")
-                else:
-                    st.warning("⚠️ Could not confirm values from PLC.")
-                client.close()
-            else:
-                st.error("❌ Failed to connect to Modbus server.")
+            client = ModbusTcpClient(MODBUS_IP, port=MODBUS_PORT)
+            client.connect()
+
+            # Write MODE to register 0
+            client.write_register(0, mode_value)
+
+            # Encode signed power to register 1
+            builder = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+            builder.add_16bit_int(int(power))
+            payload = builder.to_registers()
+            client.write_registers(1, payload)
+
+            client.close()
+            st.success(f"📡 Sent to PLC: MODE={mode} ({mode_value}), POWER={power} MW")
         except Exception as e:
-            st.error(f"❌ Modbus Error: {e}")
+            st.error(f"❌ Failed to send to PLC: {e}")
+
+    def read_from_plc(self):
+        try:
+            client = ModbusTcpClient(MODBUS_IP, port=MODBUS_PORT)
+            client.connect()
+            rr = client.read_holding_registers(0, 2, unit=1)
+            client.close()
+
+            if rr.isError():
+                return None, None
+            else:
+                mode = rr.registers[0]
+                decoder = BinaryPayloadDecoder.fromRegisters([rr.registers[1]], byteorder=Endian.Big)
+                power = decoder.decode_16bit_int()
+                return mode, power
+        except Exception as e:
+            st.error(f"❌ Failed to read from PLC: {e}")
+            return None, None
 
     def pump(self):
         if self.lower > 5 and self.upper < 100:
@@ -114,24 +138,27 @@ class PumpedStoragePlant:
             self.idle()
         self.history.append((self.upper, self.lower, self.power, self.mode, self.energy_generated))
 
-# ------------------ Main Control ------------------ #
-mode = st.radio("🔘 Select Simulation Mode", ["Manual Mode", "Simulate Full Day", "Real-Time Mode"])
+# ------------------ Main Interface ------------------ #
+mode = st.radio("🎛 Select Simulation Mode", ["Manual Mode", "Simulate Full Day", "Real-Time Mode"])
 plant = PumpedStoragePlant(upper_volume, lower_volume, height_between)
 
-# ----------- Manual Mode ----------- #
 if mode == "Manual Mode":
     hour = st.slider("Select Hour", 0, 23, 12)
     load = df['Predicted_Load'][hour]
     plant.run(load)
+
     u, l, p, m, e = plant.history[-1]
 
-    st.metric("Hour", f"{hour}:00")
-    st.metric("Mode", m)
+    plc_mode, plc_power = plant.read_from_plc()
+    mode_text = {0: "Idle", 1: "Pumping", 2: "Generating"}.get(plc_mode, "Unknown")
+
+    st.subheader("📡 Live PLC Readback")
+    st.metric("PLC Mode", mode_text)
+    st.metric("PLC Power", f"{plc_power} MW")
     st.metric("Upper Reservoir", f"{u:.2f}%")
     st.metric("Lower Reservoir", f"{l:.2f}%")
     st.metric("Energy Stored", f"{e:.2f} kWh")
 
-# ----------- Simulate Full Day ----------- #
 elif mode == "Simulate Full Day":
     for i in range(24):
         plant.run(df['Predicted_Load'][i])
@@ -163,13 +190,12 @@ elif mode == "Simulate Full Day":
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_result.to_excel(writer, index=False, sheet_name="Simulation")
-    st.download_button("📅 Download Excel", data=buffer.getvalue(),
+    st.download_button("📥 Download Excel", data=buffer.getvalue(),
                        file_name="simulation_full_day.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.dataframe(df_result)
 
-# ----------- Real-Time Mode ----------- #
 else:
     st_autorefresh(interval=5000, key="realtime_auto")
     if "sim_hour" not in st.session_state:
@@ -189,7 +215,7 @@ else:
     modelog = [s[3] for s in logs]
     energylog = [s[4] for s in logs]
 
-    st.subheader("📱 Real-Time Monitoring")
+    st.subheader("📡 Real-Time Monitoring")
     st.metric("Hour", f"{hour}:00")
     st.metric("Mode", modelog[-1])
     st.metric("Upper Reservoir", f"{uplog[-1]:.2f}%")
@@ -202,18 +228,3 @@ else:
     fig_rt.add_trace(go.Scatter(x=list(range(len(powerlog))), y=powerlog, mode="lines", name="Power (MW)"))
     fig_rt.update_layout(title="Real-Time Timeline", xaxis_title="Step", yaxis_title="Value")
     st.plotly_chart(fig_rt)
-
-    df_export = pd.DataFrame({
-        "Step": list(range(len(logs))),
-        "Upper (%)": uplog,
-        "Lower (%)": lowlog,
-        "Power (MW)": powerlog,
-        "Mode": modelog,
-        "Energy (kWh)": energylog
-    })
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_export.to_excel(writer, index=False, sheet_name="RealTime")
-    st.download_button("📤 Download Excel", data=buffer.getvalue(),
-                       file_name="realtime_simulation.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
