@@ -6,7 +6,7 @@ from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
 from pymodbus.client.tcp import ModbusTcpClient
 import io
-
+client = ModbusTcpClient('127.0.0.1', port=1502)
 # ------------------ Load and Predict Load ------------------ #
 df = pd.read_csv("load_demand_sample.csv")
 df['Hour'] = df['Time'].str.slice(0, 2).astype(int)
