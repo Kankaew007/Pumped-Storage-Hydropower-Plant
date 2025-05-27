@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
-from pymodbus.client import ModbusTcpClient
+from pymodbus.client.tcp import ModbusTcpClient
 import io
 
 # ------------------ Load and Predict Load ------------------ #
