@@ -32,7 +32,7 @@ st.set_page_config(layout="wide")
 st.title("🔋 Pumped Storage Hydropower with Streamlit + Modbus (Full Control)")
 
 # ------------------ Sidebar ------------------ #
-st.sidebar.header("🧮 Reservoir Parameters")
+st.sidebar.header("🧽 Reservoir Parameters")
 uw = st.sidebar.number_input("Upper Width (m)", 100)
 ul = st.sidebar.number_input("Upper Length (m)", 100)
 ud = st.sidebar.number_input("Upper Depth (m)", 30)
@@ -69,10 +69,8 @@ class PumpedStoragePlant:
             client = ModbusTcpClient(MODBUS_IP, port=MODBUS_PORT)
             client.connect()
 
-            # Write MODE to register 0
             client.write_register(0, mode_value)
 
-            # Encode signed power to register 1
             builder = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
             builder.add_16bit_int(int(power))
             payload = builder.to_registers()
@@ -150,11 +148,17 @@ if mode == "Manual Mode":
     u, l, p, m, e = plant.history[-1]
 
     plc_mode, plc_power = plant.read_from_plc()
-    mode_text = {0: "Idle", 1: "Pumping", 2: "Generating"}.get(plc_mode, "Unknown")
+
+    if plc_mode is None:
+        mode_text = "Disconnected"
+    else:
+        mode_text = {0: "Idle", 1: "Pumping", 2: "Generating"}.get(plc_mode, "Unknown")
+
+    power_display = f"{plc_power} MW" if plc_power is not None else "N/A"
 
     st.subheader("📡 Live PLC Readback")
     st.metric("PLC Mode", mode_text)
-    st.metric("PLC Power", f"{plc_power} MW")
+    st.metric("PLC Power", power_display)
     st.metric("Upper Reservoir", f"{u:.2f}%")
     st.metric("Lower Reservoir", f"{l:.2f}%")
     st.metric("Energy Stored", f"{e:.2f} kWh")
@@ -190,7 +194,7 @@ elif mode == "Simulate Full Day":
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_result.to_excel(writer, index=False, sheet_name="Simulation")
-    st.download_button("📥 Download Excel", data=buffer.getvalue(),
+    st.download_button("📅 Download Excel", data=buffer.getvalue(),
                        file_name="simulation_full_day.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
