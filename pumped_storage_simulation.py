@@ -4,9 +4,11 @@ import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from streamlit_autorefresh import st_autorefresh
-from pymodbus.client.tcp import ModbusTcpClient
+from pymodbus.client.sync import ModbusTcpClient
 import io
-client = ModbusTcpClient('127.0.0.1', port=502)
+
+client = ModbusTcpClient('127.0.0.1', port=1502)
+
 # ------------------ Load and Predict Load ------------------ #
 df = pd.read_csv("load_demand_sample.csv")
 df['Hour'] = df['Time'].str.slice(0, 2).astype(int)
@@ -25,7 +27,7 @@ df['Predicted_Load'] = model.predict(X)
 st.set_page_config(layout="wide")
 st.title("🔋 Pumped Storage Hydropower Simulation with AI + Modbus TCP")
 
-st.sidebar.header("🧮 Reservoir Parameters")
+st.sidebar.header("🧲 Reservoir Parameters")
 uw = st.sidebar.number_input("Upper Width (m)", 100)
 ul = st.sidebar.number_input("Upper Length (m)", 100)
 ud = st.sidebar.number_input("Upper Depth (m)", 30)
@@ -59,14 +61,21 @@ class PumpedStoragePlant:
     def send_to_plc(self, mode, power):
         mode_value = {"Idle": 0, "Pumping": 1, "Generating": 2}.get(mode, 0)
         try:
-            client = ModbusTcpClient('127.0.0.1', port=502)
-            client.connect()
-            client.write_register(0, mode_value)  # Register 0 = MODE
-            client.write_register(1, int(power))  # Register 1 = POWER
-            client.close()
-            st.success(f"📡 Sent to PLC (QModMaster): MODE={mode}, POWER={power} MW")
+            client = ModbusTcpClient('127.0.0.1', port=1502)
+            if client.connect():
+                client.write_register(0, mode_value, unit=1)
+                client.write_register(1, int(power), unit=1)
+                read = client.read_holding_registers(0, 2, unit=1)
+                if not read.isError():
+                    st.success(f"📱 Sent to PLC: MODE={mode}({mode_value}), POWER={power} MW")
+                    st.info(f"📅 Confirmed Read: MODE={read.registers[0]}, POWER={read.registers[1]}")
+                else:
+                    st.warning("⚠️ Could not confirm values from PLC.")
+                client.close()
+            else:
+                st.error("❌ Failed to connect to Modbus server.")
         except Exception as e:
-            st.error(f"❌ Failed to send to Modbus PLC: {e}")
+            st.error(f"❌ Modbus Error: {e}")
 
     def pump(self):
         if self.lower > 5 and self.upper < 100:
@@ -154,7 +163,7 @@ elif mode == "Simulate Full Day":
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df_result.to_excel(writer, index=False, sheet_name="Simulation")
-    st.download_button("📥 Download Excel", data=buffer.getvalue(),
+    st.download_button("📅 Download Excel", data=buffer.getvalue(),
                        file_name="simulation_full_day.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -180,7 +189,7 @@ else:
     modelog = [s[3] for s in logs]
     energylog = [s[4] for s in logs]
 
-    st.subheader("📡 Real-Time Monitoring")
+    st.subheader("📱 Real-Time Monitoring")
     st.metric("Hour", f"{hour}:00")
     st.metric("Mode", modelog[-1])
     st.metric("Upper Reservoir", f"{uplog[-1]:.2f}%")
